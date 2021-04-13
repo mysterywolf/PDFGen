@@ -1,4 +1,4 @@
-PDFGen
+PDFGen for RT-Thread
 ======
 <img src="/pdfgen_logo.png" alt="PDFGen Logo" width="200" align="right"/>
 
@@ -71,3 +71,31 @@ Coverity scan: [![Coverity scan](https://scan.coverity.com/projects/11942/badge.
 Static Analysis
 ===============
 This is a code base that I use to test static analysis tools. As such the build system is quite a bit more complex than should be necessary for a project of this size.
+
+
+
+# 如何打开 PDFGen
+
+使用 PDFGen 需要在 RT-Thread 的包管理器中选择它，具体路径如下：
+
+```
+RT-Thread online packages
+    multimedia packages --->
+        [*] PDFGen: Simple C PDF Writer/Generation library  --->
+```
+
+
+
+# 注意事项
+
+本软件包用到了`printf`函数的浮点输出功能，请确认你的编译器支持该功能。对于RT-Studio用户，可以在此处打开`printf`浮点输出功能。
+
+![printf_float](printf_float.png)
+
+
+
+# 维护 & 联系
+
+主页：https://github.com/mysterywolf/PDFGen
+
+维护：[Meco Man](https://github.com/mysterywolf)
