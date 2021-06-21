@@ -458,18 +458,23 @@ static ssize_t dstr_ensure(struct dstr *str, size_t len)
     if (!str->data && len <= sizeof(str->static_data))
         str->alloc_len = len;
     else if (str->alloc_len < len) {
-        char *new_data;
         size_t new_len;
-        bool have_stack_data = !str->data;
 
         new_len = len + 4096;
-        new_data = (char *)realloc(str->data, new_len);
-        if (!new_data)
-            return -ENOMEM;
-        // If we move beyond the on-stack buffer, copy the old data out
-        if (have_stack_data && str->used_len > 0)
-            memcpy(new_data, str->static_data, str->used_len + 1);
-        str->data = new_data;
+
+        if (str->data) {
+            char *new_data = (char *)realloc((void *)str->data, new_len);
+            if (!new_data)
+                return -ENOMEM;
+            str->data = new_data;
+        } else {
+            str->data = (char *)malloc(new_len);
+            if (!str->data)
+                return -ENOMEM;
+            if (str->used_len)
+                memcpy(str->data, str->static_data, str->used_len + 1);
+        }
+
         str->alloc_len = new_len;
     }
     return 0;
@@ -630,6 +635,9 @@ static struct pdf_object *pdf_add_object(struct pdf_doc *pdf, int type)
 {
     struct pdf_object *obj;
 
+    if (!pdf)
+        return NULL;
+
     obj = (struct pdf_object *)calloc(1, sizeof(*obj));
     if (!obj) {
         pdf_set_err(pdf, -errno,
@@ -765,12 +773,16 @@ void pdf_destroy(struct pdf_doc *pdf)
 static struct pdf_object *pdf_find_first_object(const struct pdf_doc *pdf,
                                                 int type)
 {
+    if (!pdf)
+        return NULL;
     return pdf->first_objects[type];
 }
 
 static struct pdf_object *pdf_find_last_object(const struct pdf_doc *pdf,
                                                int type)
 {
+    if (!pdf)
+        return NULL;
     return pdf->last_objects[type];
 }
 
@@ -827,6 +839,22 @@ int pdf_page_set_size(struct pdf_doc *pdf, struct pdf_object *page,
     page->page.width = width;
     page->page.height = height;
     return 0;
+}
+
+// Recursively scan for the number of children
+static int pdf_get_bookmark_count(const struct pdf_object *obj)
+{
+    int count = 0;
+    if (obj->type == OBJ_bookmark) {
+        int nchildren = flexarray_size(&obj->bookmark.children);
+        count += nchildren;
+        for (int i = 0; i < nchildren; i++) {
+            count += pdf_get_bookmark_count(
+                (const struct pdf_object *)flexarray_get(
+                    &obj->bookmark.children, i));
+        }
+    }
+    return count;
 }
 
 static int pdf_save_object(struct pdf_doc *pdf, FILE *fp, int index)
@@ -922,10 +950,7 @@ static int pdf_save_object(struct pdf_doc *pdf, FILE *fp, int index)
             break;
         fprintf(fp,
                 "<<\r\n"
-                "/A << /Type /Action\r\n"
-                "      /S /GoTo\r\n"
-                "      /D [%d 0 R /XYZ 0 %f null]\r\n"
-                "   >>\r\n"
+                "/Dest [%d 0 R /XYZ 0 %f null]\r\n"
                 "/Parent %d 0 R\r\n"
                 "/Title (%s)\r\n",
                 object->bookmark.page->index, pdf->height, parent->index,
@@ -939,6 +964,7 @@ static int pdf_save_object(struct pdf_doc *pdf, FILE *fp, int index)
                                                    nchildren - 1);
             fprintf(fp, "/First %d 0 R\r\n", f->index);
             fprintf(fp, "/Last %d 0 R\r\n", l->index);
+            fprintf(fp, "/Count %d\r\n", pdf_get_bookmark_count(object));
         }
         // Find the previous bookmark with the same parent
         for (other = object->prev;
@@ -968,7 +994,7 @@ static int pdf_save_object(struct pdf_doc *pdf, FILE *fp, int index)
             cur = first;
             while (cur) {
                 if (!cur->bookmark.parent)
-                    count++;
+                    count += pdf_get_bookmark_count(cur) + 1;
                 cur = cur->next;
             }
 
@@ -1045,8 +1071,9 @@ static int pdf_save_object(struct pdf_doc *pdf, FILE *fp, int index)
 static uint64_t hash(uint64_t hash, const void *data, size_t len)
 {
     const uint8_t *d8 = (const uint8_t *)data;
-    while (len--)
-        hash = ((hash << 5) + hash) + *d8++;
+    for (; len; len--) {
+        hash = (((hash & 0x07ffffffffffffff) << 5) + hash) + *d8++;
+    }
     return hash;
 }
 
@@ -1058,7 +1085,7 @@ int pdf_save_file(struct pdf_doc *pdf, FILE *fp)
     uint64_t id1, id2;
     time_t now = time(NULL);
 
-    fprintf(fp, "%%PDF-1.2\r\n");
+    fprintf(fp, "%%PDF-1.3\r\n");
     /* Hibit bytes */
     fprintf(fp, "%c%c%c%c%c\r\n", 0x25, 0xc7, 0xec, 0x8f, 0xa2);
 
@@ -1191,7 +1218,7 @@ int pdf_add_bookmark(struct pdf_doc *pdf, struct pdf_object *page, int parent,
 
 static int utf8_to_utf32(const char *utf8, int len, uint32_t *utf32)
 {
-    uint32_t ch = *utf8;
+    uint32_t ch = *(uint8_t *)utf8;
     uint8_t mask;
 
     if ((ch & 0x80) == 0) {
@@ -1285,7 +1312,7 @@ static int pdf_add_text_spacing(struct pdf_doc *pdf, struct pdf_object *page,
             char buf[3];
             /* Escape some characters */
             buf[0] = '\\';
-            buf[1] = code;
+            buf[1] = (uint8_t)code;
             buf[2] = '\0';
             dstr_append(&str, buf);
         } else if (strrchr("\n\r\t\b\f", code)) {
@@ -2388,6 +2415,10 @@ static size_t dgets(const uint8_t *data, size_t *pos, size_t len, char *line,
 
     while ((*pos) < len) {
         if (line_pos < line_len) {
+            // Reject non-ascii data
+            if (data[*pos] & 0x80) {
+                return 0;
+            }
             line[line_pos] = data[*pos];
             line_pos++;
         }
@@ -2636,8 +2667,7 @@ static int pdf_add_bmp_data(struct pdf_doc *pdf, struct pdf_object *page,
     const struct bmp_header *header;
     uint8_t *bmp_data = NULL;
     uint8_t row_padding;
-    uint32_t width;
-    uint32_t height;
+    uint32_t width, height, bpp;
     bool flip = true;
     int retval;
     size_t data_len;
@@ -2656,15 +2686,17 @@ static int pdf_add_bmp_data(struct pdf_doc *pdf, struct pdf_object *page,
     if (header->biCompression != 0)
         return pdf_set_err(pdf, -EINVAL, "Wrong BMP compression value: %d",
                            header->biCompression);
-    if (header->biWidth > 10 * 1024 || header->biWidth < 0)
+    if (header->biWidth > 10 * 1024 || header->biWidth <= 0)
         return pdf_set_err(pdf, -EINVAL, "BMP has invalid width: %d",
                            header->biWidth);
-    if (header->biHeight > 10 * 1024 || header->biHeight < -10 * 1024)
+    if (header->biHeight > 10 * 1024 || header->biHeight < -10 * 1024 ||
+        header->biHeight == 0)
         return pdf_set_err(pdf, -EINVAL, "BMP has invalid height: %d",
                            header->biHeight);
     if (header->biBitCount != 24 && header->biBitCount != 32)
         return pdf_set_err(pdf, -EINVAL, "Unsupported BMP bitdepth: %d",
                            header->biBitCount);
+    bpp = header->biBitCount / 8;
     width = header->biWidth;
     if (header->biHeight < 0) {
         flip = false;
@@ -2673,15 +2705,17 @@ static int pdf_add_bmp_data(struct pdf_doc *pdf, struct pdf_object *page,
         height = header->biHeight;
     }
     /* BMP rows are 4-bytes padded! */
-    row_padding = (width * header->biBitCount / 8) & 3;
+    row_padding = (width * bpp) & 3;
     data_len = (size_t)width * (size_t)height * 3;
 
-    if (len - header->bfOffBits <
-        height * (width + row_padding) * header->biBitCount / 8) {
-        return pdf_set_err(pdf, -EINVAL, "Wrong BMP image size");
-    }
+    if (header->bfOffBits >= len)
+        return pdf_set_err(pdf, -EINVAL, "Invalid BMP image offset");
 
-    if (header->biBitCount == 24) {
+    if (len - header->bfOffBits <
+        (size_t)height * (width + row_padding) * bpp)
+        return pdf_set_err(pdf, -EINVAL, "Wrong BMP image size");
+
+    if (bpp == 3) {
         /* 24 bits: change R and B colors */
         bmp_data = (uint8_t *)malloc(data_len);
         if (!bmp_data)
@@ -2695,7 +2729,7 @@ static int pdf_add_bmp_data(struct pdf_doc *pdf, struct pdf_object *page,
             bmp_data[pos * 3 + 1] = data[src_pos + 1];
             bmp_data[pos * 3 + 2] = data[src_pos];
         }
-    } else if (header->biBitCount == 32) {
+    } else if (bpp == 4) {
         /* 32 bits: change R and B colors, remove key color */
         int offs = 0;
         bmp_data = (uint8_t *)malloc(data_len);
