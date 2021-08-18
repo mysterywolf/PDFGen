@@ -2253,7 +2253,7 @@ int pdf_add_barcode(struct pdf_doc *pdf, struct pdf_object *page, int code,
 }
 
 static pdf_object *pdf_add_raw_rgb24(struct pdf_doc *pdf, const uint8_t *data,
-                                     unsigned width, unsigned height)
+                                     uint32_t width, uint32_t height)
 {
     struct pdf_object *obj;
     size_t len;
@@ -2289,8 +2289,8 @@ static pdf_object *pdf_add_raw_rgb24(struct pdf_doc *pdf, const uint8_t *data,
 }
 
 /* See http://www.videotechnology.com/jpeg/j1.html for details */
-static int jpeg_details(const unsigned char *data, size_t data_size,
-                        int *width, int *height, int *ncolours)
+static int jpeg_details(const uint8_t *data, size_t data_size,
+                        uint32_t *width, uint32_t *height, int *ncolours)
 {
     if (data_size < 4 || data[0] != 0xFF || data[1] != 0xD8)
         return -1;
@@ -2357,13 +2357,15 @@ static uint8_t *get_file(struct pdf_doc *pdf, const char *file_name,
 }
 
 static pdf_object *pdf_add_raw_jpeg_data(struct pdf_doc *pdf,
-                                         const unsigned char *jpeg_data,
-                                         size_t len)
+                                         const uint8_t *jpeg_data, size_t len,
+                                         uint32_t *width_read,
+                                         uint32_t *height_read)
 {
     struct pdf_object *obj;
-    int width, height, ncolours;
+    int ncolours;
 
-    if (jpeg_details(jpeg_data, len, &width, &height, &ncolours) < 0) {
+    if (jpeg_details(jpeg_data, len, width_read, height_read, &ncolours) <
+        0) {
         pdf_set_err(pdf, -EINVAL, "Unable to determine jpeg width/height");
         return NULL;
     }
@@ -2378,13 +2380,53 @@ static pdf_object *pdf_add_raw_jpeg_data(struct pdf_doc *pdf,
                 "/BitsPerComponent 8\r\n/Filter /DCTDecode\r\n"
                 "/Length %d\r\n>>stream\r\n",
                 flexarray_size(&pdf->objects),
-                ncolours == 1 ? "/DeviceGray" : "/DeviceRGB", width, height,
-                (int)len);
+                ncolours == 1 ? "/DeviceGray" : "/DeviceRGB", *width_read,
+                *height_read, (int)len);
     dstr_append_data(&obj->stream, jpeg_data, len);
 
     dstr_printf(&obj->stream, "\r\nendstream\r\n");
 
     return obj;
+}
+
+/**
+ * Get the display dimensions of an image, respecting the images aspect ratio
+ * if only one desired display dimension is defined.
+ * The pdf parameter is only used for setting the error value.
+ */
+static int get_img_display_dimensions(struct pdf_doc *pdf, uint32_t img_width,
+                                      uint32_t img_height,
+                                      float *display_width,
+                                      float *display_height)
+{
+    if (!display_height || !display_width) {
+        return pdf_set_err(
+            pdf, -EINVAL,
+            "display_width and display_height may not be null pointers");
+    }
+
+    const float display_width_in = *display_width;
+    const float display_height_in = *display_height;
+
+    if (display_width_in < 0 && display_height_in < 0) {
+        return pdf_set_err(pdf, -EINVAL,
+                           "Unable to determine image display dimensions, "
+                           "display_width and display_height are both < 0");
+    }
+    if (img_width == 0 || img_height == 0) {
+        return pdf_set_err(pdf, -EINVAL,
+                           "Invalid image dimensions received, the loaded "
+                           "image appears to be empty.");
+    }
+
+    if (display_width_in < 0) {
+        // Set width, keeping aspect ratio
+        *display_width = display_height_in * ((float)img_width / img_height);
+    } else if (display_height_in < 0) {
+        // Set height, keeping aspect ratio
+        *display_height = display_width_in * ((float)img_height / img_width);
+    }
+    return 0;
 }
 
 static int pdf_add_image(struct pdf_doc *pdf, struct pdf_object *page,
@@ -2442,7 +2484,7 @@ static int pdf_add_ppm_data(struct pdf_doc *pdf, struct pdf_object *page,
                             size_t len)
 {
     char line[1024];
-    unsigned width, height, size;
+    uint32_t width, height, size;
     size_t pos = 0;
 
     /* Load the PPM file */
@@ -2487,21 +2529,26 @@ static int pdf_add_ppm_data(struct pdf_doc *pdf, struct pdf_object *page,
 
 static int pdf_add_jpeg_data(struct pdf_doc *pdf, struct pdf_object *page,
                              float x, float y, float display_width,
-                             float display_height,
-                             const unsigned char *jpeg_data, size_t len)
+                             float display_height, const uint8_t *jpeg_data,
+                             size_t len)
 {
     struct pdf_object *obj;
+    uint32_t img_width, img_height;
 
-    obj = pdf_add_raw_jpeg_data(pdf, jpeg_data, len);
+    obj = pdf_add_raw_jpeg_data(pdf, jpeg_data, len, &img_width, &img_height);
     if (!obj)
         return pdf->errval;
 
+    if (get_img_display_dimensions(pdf, img_width, img_height, &display_width,
+                                   &display_height)) {
+        return pdf->errval;
+    }
     return pdf_add_image(pdf, page, obj, x, y, display_width, display_height);
 }
 
 int pdf_add_rgb24(struct pdf_doc *pdf, struct pdf_object *page, float x,
                   float y, float display_width, float display_height,
-                  const uint8_t *data, unsigned width, unsigned height)
+                  const uint8_t *data, uint32_t width, uint32_t height)
 {
     struct pdf_object *obj;
 
@@ -2509,6 +2556,10 @@ int pdf_add_rgb24(struct pdf_doc *pdf, struct pdf_object *page, float x,
     if (!obj)
         return pdf->errval;
 
+    if (get_img_display_dimensions(pdf, width, height, &display_width,
+                                   &display_height)) {
+        return pdf->errval;
+    }
     return pdf_add_image(pdf, page, obj, x, y, display_width, display_height);
 }
 
@@ -2651,6 +2702,10 @@ static int pdf_add_png_data(struct pdf_doc *pdf, struct pdf_object *page,
 
     free(final_data);
 
+    if (get_img_display_dimensions(pdf, info.width, info.height,
+                                   &display_width, &display_height)) {
+        return pdf->errval;
+    }
     return pdf_add_image(pdf, page, obj, x, y, display_width, display_height);
 
 info_free:
