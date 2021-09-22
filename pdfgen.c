@@ -92,26 +92,11 @@
  * y    curveto.
  */
 
-#if defined(_MSC_VER)
-#define _CRT_SECURE_NO_WARNINGS 1 // Drop the MSVC complaints about snprintf
-#define _USE_MATH_DEFINES
-#include <BaseTsd.h>
-typedef SSIZE_T ssize_t;
-#else
-
-#ifndef _POSIX_SOURCE
-#define _POSIX_SOURCE /* For localtime_r */
-#endif
-
-#ifndef _XOPEN_SOURCE
-#define _XOPEN_SOURCE 600 /* for M_SQRT2 */
-#endif
-
-#include <sys/types.h> /* for ssize_t */
-#endif
-
 #include <ctype.h>
-#include <errno.h>
+#include <sys/errno.h>
+#include <sys/types.h> /* for ssize_t */
+#include <sys/stat.h>
+#include <sys/time.h>
 #include <inttypes.h>
 #include <math.h>
 #include <stdarg.h>
@@ -120,10 +105,12 @@ typedef SSIZE_T ssize_t;
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/stat.h>
-#include <time.h>
 
 #include "pdfgen.h"
+
+#ifndef M_SQRT2
+#define M_SQRT2 1.41421356237309504880
+#endif
 
 #define ARRAY_SIZE(a) (sizeof(a) / sizeof((a)[0]))
 
@@ -131,20 +118,6 @@ typedef SSIZE_T ssize_t;
 #define PDF_RGB_G(c) (float)((((c) >> 8) & 0xff) / 255.0)
 #define PDF_RGB_B(c) (float)((((c) >> 0) & 0xff) / 255.0)
 #define PDF_IS_TRANSPARENT(c) (((c) >> 24) == 0xff)
-
-#if defined(_MSC_VER)
-#define inline __inline
-#define snprintf _snprintf
-#define strcasecmp _stricmp
-#define strncasecmp _strnicmp
-#ifdef stat
-#undef stat
-#endif
-#define stat _stat
-#define SKIP_ATTRIBUTE
-#else
-#include <strings.h> // strcasecmp
-#endif
 
 /**
  * Try and support big & little endian machines
@@ -155,18 +128,6 @@ static inline uint32_t bswap32(uint32_t x)
             ((x & 0x0000ff00u) << 8) | ((x & 0x000000ffu) << 24));
 }
 
-#ifdef __has_include // C++17, supported as extension to C++11 in clang, GCC
-                     // 5+, vs2015
-#if __has_include(<endian.h>)
-#include <endian.h> // gnu libc normally provides, linux
-#elif __has_include(<machine/endian.h>)
-#include <machine/endian.h> //open bsd, macos
-#elif __has_include(<sys/param.h>)
-#include <sys/param.h> // mingw, some bsd (not open/macos)
-#elif __has_include(<sys/isadefs.h>)
-#include <sys/isadefs.h> // solaris
-#endif
-#endif
 
 #if !defined(__LITTLE_ENDIAN__) && !defined(__BIG_ENDIAN__)
 #ifndef __BYTE_ORDER__
@@ -1902,7 +1863,6 @@ int pdf_add_custom_path(struct pdf_doc *pdf, struct pdf_object *page,
             break;
         default:
             return pdf_set_err(pdf, -errno, "Invalid operation");
-            break;
         }
     }
 
@@ -2729,13 +2689,11 @@ static int pdf_add_png_data(struct pdf_doc *pdf, struct pdf_object *page,
                 pdf_set_err(pdf, -EINVAL,
                             "PNGs with an alpha channel are not supported");
                 goto info_free;
-                break;
 
             default:
                 pdf_set_err(pdf, -EINVAL, "Unknown PNG color type %d",
                             header->colortype);
                 goto info_free;
-                break;
             }
             info.color_type = header->colortype;
             info.width = ntoh32(header->width);
@@ -2856,7 +2814,6 @@ static int pdf_add_png_data(struct pdf_doc *pdf, struct pdf_object *page,
                     "Cannot map PNG color type %d to PDF color space",
                     info.color_type);
         goto info_free;
-        break;
     }
 
     if (palette_buffer) {
