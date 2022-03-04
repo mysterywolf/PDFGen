@@ -1,3 +1,4 @@
+#include <locale.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -20,6 +21,8 @@ int main(int argc, char *argv[])
     float height, width;
     int bm;
     int err;
+
+    setlocale(LC_ALL, "");
 
     /* Unused */
     (void)argc;
@@ -82,6 +85,8 @@ int main(int argc, char *argv[])
         "I've put some embedded line breaks in to "
         "see how it copes with them. Hopefully it all works properly.\n\n\n"
         "We even include multiple breaks\n"
+        "And special stuff €ÜŽžŠšÁ that áüöä should ÄÜÖß— “”‘’ break\n"
+        "————————————————————————————————————————————————\n"
         "thisisanenourmouswordthatwillneverfitandwillhavetobecut",
         16, 60, 800, PDF_RGB(0, 0, 0), 300, PDF_ALIGN_JUSTIFY, &height);
     pdf_add_rectangle(pdf, NULL, 58, 800 + 16, 304, -height, 2,
@@ -133,7 +138,7 @@ int main(int argc, char *argv[])
                     PDF_RGB(0, 0, 0));
     pdf_add_rectangle(pdf, NULL, 150, 150, 100, 100, 4, PDF_RGB(0, 0, 0xff));
     pdf_add_filled_rectangle(pdf, NULL, 150, 450, 100, 100, 4,
-                             PDF_RGB(0, 0xff, 0));
+                             PDF_RGB(0, 0xff, 0), PDF_TRANSPARENT);
     pdf_add_text(pdf, NULL, "This should be transparent", 20, 160, 500,
                  PDF_ARGB(0x80, 0, 0, 0));
     float p1X[] = {200, 200, 300, 300};
@@ -157,8 +162,8 @@ int main(int argc, char *argv[])
         pdf, NULL,
         "Control characters ( ) < > [ ] { } / % \n \r \t \b \f ending", 10,
         50, 45, PDF_RGB(0, 0, 0));
-    pdf_add_text(pdf, NULL, "Special characters: €ÜŽžŠšÁáüöäÄÜÖß", 10, 50, 15,
-                 PDF_RGB(0, 0, 0));
+    pdf_add_text(pdf, NULL, "Special characters: €ÜŽžŠšÁáüöäÄÜÖß—“”‘’", 10,
+                 50, 15, PDF_RGB(0, 0, 0));
     pdf_add_text(pdf, NULL, "This one has a new line in it\nThere it was", 10,
                  50, 80, PDF_RGB(0, 0, 0));
     pdf_add_text(
