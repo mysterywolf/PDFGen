@@ -85,15 +85,6 @@ RT-Thread online packages
 ```
 
 
-
-# 注意事项
-
-本软件包用到了`printf`函数的浮点输出功能，请确认你的编译器支持该功能。对于RT-Studio用户，可以在此处打开`printf`浮点输出功能。
-
-![printf_float](printf_float.png)
-
-
-
 # 维护 & 联系
 
 主页：https://github.com/mysterywolf/PDFGen
