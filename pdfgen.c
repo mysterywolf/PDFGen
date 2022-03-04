@@ -2790,7 +2790,6 @@ static int pdf_add_png_data(struct pdf_doc *pdf, struct pdf_object *page,
         pdf_set_err(pdf, -EINVAL, "PNG has unsupported color type: %d",
                     header->colorType);
         goto free_buffers;
-        break;
     }
 
     /* process PNG chunks */
