@@ -2849,10 +2849,10 @@ static int pdf_add_barcode_upce(struct pdf_doc *pdf, struct pdf_object *page,
     char X[6];
     if (string[5] && memcmp(string + 6, "0000", 4) == 0 &&
         '5' <= string[10] && string[10] <= '9') {
-        memcpy(X, string + 1, 5);
+        rt_memcpy(X, string + 1, 5);
         X[5] = string[10];
     } else if (string[4] && memcmp(string + 5, "00000", 5) == 0) {
-        memcpy(X, string + 1, 4);
+        rt_memcpy(X, string + 1, 4);
         X[4] = string[11];
         X[5] = 4;
     } else if ('0' <= string[3] && string[3] <= '2' &&
@@ -2865,7 +2865,7 @@ static int pdf_add_barcode_upce(struct pdf_doc *pdf, struct pdf_object *page,
         X[5] = string[3];
     } else if ('3' <= string[3] && string[3] <= '9' &&
                memcmp(string + 4, "00000", 5) == 0) {
-        memcpy(X, string + 1, 3);
+        rt_memcpy(X, string + 1, 3);
         X[3] = string[9];
         X[4] = string[10];
         X[5] = 3;
