@@ -3,7 +3,7 @@
  * It supports text, shapes, images etc...
  * Capable of handling millions of objects without too much performance
  * penalty.
- * Public domain license - no warrenty implied; use at your own risk.
+ * Public domain license - no warranty implied; use at your own risk.
  */
 
 /**
@@ -1324,7 +1324,7 @@ static int utf8_to_pdfencoding(struct pdf_doc *pdf, const char *utf8, int len,
     if (code > 255) {
         /* We support *some* minimal UTF-8 characters */
         // See Appendix D of
-        // https://www.adobe.com/content/dam/acom/en/devnet/pdf/pdfs/pdf_reference_archives/PDFReference.pdf
+        // https://opensource.adobe.com/dc-acrobat-sdk-docs/pdfstandards/pdfreference1.7old.pdf
         // These are all in WinAnsiEncoding
         switch (code) {
         case 0x160: // Latin Capital Letter S with Caron
@@ -1359,8 +1359,8 @@ static int utf8_to_pdfencoding(struct pdf_doc *pdf, const char *utf8, int len,
             break;
         default:
             return pdf_set_err(pdf, -EINVAL,
-                               "Unsupported UTF-8 character: 0x%x 0o%o", code,
-                               code);
+                               "Unsupported UTF-8 character: 0x%x 0o%o %s",
+                               code, code, utf8);
         }
     } else {
         *res = code;
@@ -1370,7 +1370,8 @@ static int utf8_to_pdfencoding(struct pdf_doc *pdf, const char *utf8, int len,
 
 static int pdf_add_text_spacing(struct pdf_doc *pdf, struct pdf_object *page,
                                 const char *text, float size, float xoff,
-                                float yoff, uint32_t colour, float spacing)
+                                float yoff, uint32_t colour, float spacing,
+                                float angle)
 {
     int ret;
     size_t len = text ? strlen(text) : 0;
@@ -1383,7 +1384,12 @@ static int pdf_add_text_spacing(struct pdf_doc *pdf, struct pdf_object *page,
 
     dstr_append(&str, "BT ");
     dstr_printf(&str, "/GS%d gs ", alpha);
-    dstr_printf(&str, "%f %f TD ", xoff, yoff);
+    if (angle != 0) {
+        dstr_printf(&str, "%f %f %f %f %f %f Tm ", cosf(angle), sinf(angle),
+                    -sinf(angle), cosf(angle), xoff, yoff);
+    } else {
+        dstr_printf(&str, "%f %f TD ", xoff, yoff);
+    }
     dstr_printf(&str, "/F%d %f Tf ", pdf->current_font->font.index, size);
     dstr_printf(&str, "%f %f %f rg ", PDF_RGB_R(colour), PDF_RGB_G(colour),
                 PDF_RGB_B(colour));
@@ -1428,7 +1434,16 @@ int pdf_add_text(struct pdf_doc *pdf, struct pdf_object *page,
                  const char *text, float size, float xoff, float yoff,
                  uint32_t colour)
 {
-    return pdf_add_text_spacing(pdf, page, text, size, xoff, yoff, colour, 0);
+    return pdf_add_text_spacing(pdf, page, text, size, xoff, yoff, colour, 0,
+                                0);
+}
+
+int pdf_add_text_rotate(struct pdf_doc *pdf, struct pdf_object *page,
+                        const char *text, float size, float xoff, float yoff,
+                        float angle, uint32_t colour)
+{
+    return pdf_add_text_spacing(pdf, page, text, size, xoff, yoff, colour, 0,
+                                angle);
 }
 
 /* How wide is each character, in points, at size 14 */
@@ -1762,8 +1777,8 @@ static const char *find_word_break(const char *string)
 
 int pdf_add_text_wrap(struct pdf_doc *pdf, struct pdf_object *page,
                       const char *text, float size, float xoff, float yoff,
-                      uint32_t colour, float wrap_width, int align,
-                      float *height)
+                      float angle, uint32_t colour, float wrap_width,
+                      int align, float *height)
 {
     /* Move through the text string, stopping at word boundaries,
      * trying to find the longest text string we can fit in the given width
@@ -1863,7 +1878,7 @@ int pdf_add_text_wrap(struct pdf_doc *pdf, struct pdf_object *page,
 
             if (align != PDF_ALIGN_NO_WRITE) {
                 pdf_add_text_spacing(pdf, page, line, size, xoff_align, yoff,
-                                     colour, char_spacing);
+                                     colour, char_spacing, angle);
             }
 
             if (*end == ' ')
@@ -1935,7 +1950,7 @@ int pdf_add_quadratic_bezier(struct pdf_doc *pdf, struct pdf_object *page,
 }
 
 int pdf_add_custom_path(struct pdf_doc *pdf, struct pdf_object *page,
-                        struct pdf_path_operation *operations,
+                        const struct pdf_path_operation *operations,
                         int operation_count, float stroke_width,
                         uint32_t stroke_colour, uint32_t fill_colour)
 {
@@ -2581,7 +2596,7 @@ static int pdf_add_barcode_ean13(struct pdf_doc *pdf, struct pdf_object *page,
 
     for (int i = 0; i != 6; i++) {
         text[0] = *string;
-        e = pdf_add_text_wrap(pdf, page, text, font, x, y, colour,
+        e = pdf_add_text_wrap(pdf, page, text, font, x, y, 0, colour,
                               7 * x_width, PDF_ALIGN_CENTER, NULL);
         if (e < 0) {
             pdf_set_font(pdf, save_font);
@@ -2608,7 +2623,7 @@ static int pdf_add_barcode_ean13(struct pdf_doc *pdf, struct pdf_object *page,
 
     for (int i = 0; i != 6; i++) {
         text[0] = *string;
-        e = pdf_add_text_wrap(pdf, page, text, font, x, y, colour,
+        e = pdf_add_text_wrap(pdf, page, text, font, x, y, 0, colour,
                               7 * x_width, PDF_ALIGN_CENTER, NULL);
         if (e < 0) {
             pdf_set_font(pdf, save_font);
@@ -2695,7 +2710,7 @@ static int pdf_add_barcode_upca(struct pdf_doc *pdf, struct pdf_object *page,
     for (int i = 0; i != 6; i++) {
         text[0] = *string;
         if (i) {
-            e = pdf_add_text_wrap(pdf, page, text, font, x, y, colour,
+            e = pdf_add_text_wrap(pdf, page, text, font, x, y, 0, colour,
                                   7 * x_width, PDF_ALIGN_CENTER, NULL);
             if (e < 0) {
                 pdf_set_font(pdf, save_font);
@@ -2724,7 +2739,7 @@ static int pdf_add_barcode_upca(struct pdf_doc *pdf, struct pdf_object *page,
     for (int i = 0; i != 6; i++) {
         text[0] = *string;
         if (i != 5) {
-            e = pdf_add_text_wrap(pdf, page, text, font, x, y, colour,
+            e = pdf_add_text_wrap(pdf, page, text, font, x, y, 0, colour,
                                   7 * x_width, PDF_ALIGN_CENTER, NULL);
             if (e < 0) {
                 pdf_set_font(pdf, save_font);
@@ -2813,7 +2828,7 @@ static int pdf_add_barcode_ean8(struct pdf_doc *pdf, struct pdf_object *page,
 
     for (int i = 0; i != 4; i++) {
         text[0] = *string;
-        e = pdf_add_text_wrap(pdf, page, text, font, x, y, colour,
+        e = pdf_add_text_wrap(pdf, page, text, font, x, y, 0, colour,
                               7 * x_width, PDF_ALIGN_CENTER, NULL);
         if (e < 0) {
             pdf_set_font(pdf, save_font);
@@ -2839,7 +2854,7 @@ static int pdf_add_barcode_ean8(struct pdf_doc *pdf, struct pdf_object *page,
 
     for (int i = 0; i != 4; i++) {
         text[0] = *string;
-        e = pdf_add_text_wrap(pdf, page, text, font, x, y, colour,
+        e = pdf_add_text_wrap(pdf, page, text, font, x, y, 0, colour,
                               7 * x_width, PDF_ALIGN_CENTER, NULL);
         if (e < 0) {
             pdf_set_font(pdf, save_font);
@@ -2962,7 +2977,7 @@ static int pdf_add_barcode_upce(struct pdf_doc *pdf, struct pdf_object *page,
 
     for (int i = 0; i != 6; i++) {
         text[0] = X[i];
-        e = pdf_add_text_wrap(pdf, page, text, font, x, y, colour,
+        e = pdf_add_text_wrap(pdf, page, text, font, x, y, 0, colour,
                               7 * x_width, PDF_ALIGN_CENTER, NULL);
         if (e < 0) {
             pdf_set_font(pdf, save_font);
